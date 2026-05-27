@@ -1,0 +1,3 @@
+subapase per il database
+github claro
+vercel per caricare app
