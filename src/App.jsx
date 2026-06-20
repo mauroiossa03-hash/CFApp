@@ -44,8 +44,21 @@ const TOPICS = [
   { id: "port",       name: "Portfolio Management",       icon: "🎯", total: 175, color: "#0891B2", free: false },
 ];
 
+/*
+ * Mapping topic id → volume name used in Supabase `questions` table.
+ * Right now only Economics (Volume 2) is loaded; others will be added later.
+ * When a volume is not yet loaded we fall back to mock data.
+ */
+const TOPIC_TO_VOLUME = {
+  econ: "Economics",
+  // ethics: "Ethics",  // uncomment when loaded
+  // quant: "Quantitative Methods",
+  // etc.
+};
+
 const FREE_QUESTIONS_PER_TOPIC = 15;
 
+/* ── FALLBACK MOCK DATA (used when Supabase has no data for a topic) ── */
 const MOCK_QUESTIONS = [
   {
     id: 1, topic: "ethics",
@@ -80,11 +93,68 @@ const MOCK_QUESTIONS = [
   },
 ];
 
-const FLASHCARDS = [
+const MOCK_FLASHCARDS = [
   { id: 1, topic: "quant", front: "What is the formula for the Sharpe Ratio?", back: "Sharpe Ratio = (Rp − Rf) / σp\n\nWhere Rp = portfolio return, Rf = risk-free rate, σp = portfolio standard deviation", tag: "Formula" },
   { id: 2, topic: "ethics", front: "Standard III(A) — Loyalty, Prudence and Care", back: "Members must act for the benefit of their clients and place their clients' interests before their employer's or their own interests. The client's interests always come first.", tag: "Standard" },
   { id: 3, topic: "fi", front: "What is Modified Duration?", back: "Modified Duration = Macaulay Duration / (1 + y/m)\n\nMeasures the price sensitivity of a bond to interest rate changes. A duration of 5 means ~5% price change per 1% yield change.", tag: "Formula" },
 ];
+
+/* ── SUPABASE → APP FORMAT CONVERTERS ── */
+
+/**
+ * Converts a row from the Supabase `questions` table into the format
+ * used by QuizScreen and ExamScreen.
+ *
+ * Supabase columns:
+ *   id, volume, topic, learning_module, section,
+ *   question_text, option_a, option_b, option_c, option_d,
+ *   correct_answer (A/B/C/D), explanation, difficulty,
+ *   has_chart, chart_data, tags, created_at
+ */
+function dbQuestionToApp(row) {
+  const opts = [row.option_a, row.option_b, row.option_c, row.option_d];
+  const correctIndex = { A: 0, B: 1, C: 2, D: 3 }[row.correct_answer] ?? 0;
+
+  // Map Supabase volume name back to topic id for badge display
+  const topicId = Object.entries(TOPIC_TO_VOLUME).find(
+    ([, v]) => v === row.volume
+  )?.[0] || "econ";
+
+  return {
+    id:          row.id,
+    topic:       topicId,
+    q:           row.question_text,
+    opts,
+    correct:     correctIndex,
+    explanation: row.explanation,
+    difficulty:  row.difficulty,
+    tags:        row.tags || [],
+    hasChart:    row.has_chart,
+    chartData:   row.chart_data,
+  };
+}
+
+/**
+ * Converts a row from the Supabase `flashcards` table into the format
+ * used by FlashcardScreen.
+ *
+ * Supabase columns:
+ *   id, volume, topic, learning_module, section,
+ *   front, back, has_chart, chart_data, tags, created_at
+ */
+function dbFlashcardToApp(row) {
+  const topicId = Object.entries(TOPIC_TO_VOLUME).find(
+    ([, v]) => v === row.volume
+  )?.[0] || "econ";
+
+  return {
+    id:    row.id,
+    topic: topicId,
+    front: row.front,
+    back:  row.back,
+    tag:   row.tags?.[0] || "Concept",
+  };
+}
 
 /* ── GLOBAL STYLES ── */
 const injectStyles = () => {
@@ -150,9 +220,7 @@ function LogoMark({ size = 36 }) {
           <stop offset="0%" stopColor="#4DA3E0"/><stop offset="100%" stopColor="#93D0F5"/>
         </linearGradient>
       </defs>
-      {/* navy disc */}
       <circle cx="50" cy="50" r="48" fill="#0B1E3D" stroke="#2B4A7A" strokeWidth="1"/>
-      {/* histogram bars (gaussian) */}
       <g>
         <rect x="14" y="58" width="5.2" height="14" rx="1" fill="url(#lgBarA)"/>
         <rect x="21" y="52" width="5.2" height="20" rx="1" fill="url(#lgBarA)"/>
@@ -165,7 +233,6 @@ function LogoMark({ size = 36 }) {
         <rect x="70" y="51" width="5.2" height="21" rx="1" fill="url(#lgBarA)"/>
         <rect x="77" y="57" width="5.2" height="15" rx="1" fill="url(#lgBarA)"/>
       </g>
-      {/* gaussian curve */}
       <path d="M14 64 Q30 60 38 44 Q46 22 50 21 Q54 22 62 44 Q70 60 86 64"
         fill="none" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round"/>
     </svg>
@@ -205,6 +272,20 @@ function ProgressRing({ pct, size=56, stroke=5, color=C.blue }) {
 function TopicBadge({ topic }) {
   const t = TOPICS.find(x=>x.id===topic) || TOPICS[0];
   return <span className="tag" style={{ background:`${t.color}22`, color:t.color, border:`1px solid ${t.color}44` }}>{t.name}</span>;
+}
+
+/* ── LOADING SPINNER ── */
+function Spinner() {
+  return (
+    <div style={{ display:"flex", justifyContent:"center", alignItems:"center", padding:"60px 0" }}>
+      <div style={{
+        width:32, height:32, borderRadius:"50%",
+        border:`3px solid ${C.border}`,
+        borderTopColor:C.blue,
+        animation:"spin .7s linear infinite"
+      }}/>
+    </div>
+  );
 }
 
 /* ── NAV ── */
@@ -257,7 +338,6 @@ function Landing({ setScreen, lang, setLang }) {
 
   return (
     <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden", paddingBottom:40 }}>
-      {/* BG mesh */}
       <div style={{ position:"absolute", inset:0, zIndex:0, pointerEvents:"none" }}>
         <div style={{ position:"absolute", top:"-20%", left:"-10%", width:"60vw", height:"60vw", borderRadius:"50%", background:`radial-gradient(circle, ${C.blue}10 0%, transparent 70%)` }}/>
         <div style={{ position:"absolute", bottom:"-10%", right:"-10%", width:"50vw", height:"50vw", borderRadius:"50%", background:`radial-gradient(circle, #2563EB0D 0%, transparent 70%)` }}/>
@@ -310,7 +390,6 @@ function Landing({ setScreen, lang, setLang }) {
           {t?"✓ Nessuna carta richiesta · Inizia in 30 secondi":"✓ No card required · Start in 30 seconds"}
         </div>
 
-        {/* Stats */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginTop:48, maxWidth:440, width:"100%", animation:"fadeUp .5s ease .4s both" }}>
           {[
             { n:"2,000+", l:t?"Domande":"Questions" },
@@ -324,7 +403,6 @@ function Landing({ setScreen, lang, setLang }) {
           ))}
         </div>
 
-        {/* Social proof bar */}
         <div style={{ marginTop:40, display:"flex", flexDirection:"column", alignItems:"center", gap:8, animation:"fadeUp .5s ease .45s both" }}>
           <div style={{ display:"flex", alignItems:"center", gap:4 }}>
             {[...Array(5)].map((_,i)=>(<span key={i} style={{ color:"#F59E0B", fontSize:18 }}>★</span>))}
@@ -335,7 +413,6 @@ function Landing({ setScreen, lang, setLang }) {
           <div style={{ fontSize:12, color:C.gray }}>{t?"— Marco R., CFA Candidate":"— Marco R., CFA Candidate"}</div>
         </div>
 
-        {/* Features */}
         <div style={{ marginTop:72, width:"100%", maxWidth:520 }}>
           <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700, color:C.navy, marginBottom:8 }}>
             {t?"Tutto ciò che ti serve per superarlo":"Everything you need to pass"}
@@ -356,7 +433,6 @@ function Landing({ setScreen, lang, setLang }) {
           </div>
         </div>
 
-        {/* Final CTA */}
         <div className="card" style={{ marginTop:56, width:"100%", maxWidth:520, padding:"36px 28px",
           background:`linear-gradient(135deg, ${C.navy}, ${C.blue})`, textAlign:"center", position:"relative", overflow:"hidden" }}>
           <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:28, fontWeight:700, color:"#fff", marginBottom:10, position:"relative", zIndex:1 }}>
@@ -375,7 +451,6 @@ function Landing({ setScreen, lang, setLang }) {
           </div>
         </div>
 
-        {/* Footer */}
         <div style={{ marginTop:48, paddingTop:24, borderTop:`1px solid ${C.border}`, width:"100%", maxWidth:520,
           display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
           <Logo size={16} compact={false}/>
@@ -392,7 +467,6 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
   const [progress, setProgress] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Load real progress from Supabase
   useEffect(()=>{
     const loadProgress = async () => {
       const { data, error } = await supabase
@@ -425,7 +499,6 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
 
   return (
     <div style={{ padding:"24px 20px 90px", animation:"fadeIn .4s ease" }}>
-      {/* Header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28 }}>
         <div>
           <div style={{ fontSize:11, color:C.gray, letterSpacing:2, textTransform:"uppercase", fontWeight:700 }}>{t?"Bentornato":"Welcome back"}</div>
@@ -439,7 +512,6 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
         </div>
       </div>
 
-      {/* Stats */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:24 }}>
         {[
           { icon:"✅", val: loading?"…":totalAnswered, label:t?"Risposte":"Answered" },
@@ -454,7 +526,6 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
         ))}
       </div>
 
-      {/* Exam countdown */}
       <div className="card" style={{ padding:"16px 20px", marginBottom:24, background:`linear-gradient(135deg, ${C.navy}, ${C.blue})`, borderColor:C.blue, animation:"fadeUp .4s ease .15s both" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
@@ -470,7 +541,6 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
         </div>
       </div>
 
-      {/* Topics */}
       <div style={{ marginBottom:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
           <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:800, letterSpacing:.5 }}>{t?"Topic":"Topics"}</h2>
@@ -535,6 +605,8 @@ function Dashboard({ setScreen, setActiveTopic, lang, isPremium, user }) {
 /* ── QUIZ ── */
 function QuizScreen({ activeTopic, lang, isPremium }) {
   const t = lang==="it";
+  const [questions, setQuestions] = useState([]);
+  const [loadingQ, setLoadingQ] = useState(true);
   const [qIdx, setQIdx] = useState(0);
   const [selected, setSelected] = useState(null);
   const [revealed, setRevealed] = useState(false);
@@ -543,20 +615,64 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
   const [filter, setFilter] = useState(activeTopic||"all");
   const timerRef = useRef();
 
-  const questions = MOCK_QUESTIONS.filter(q=>filter==="all"||q.topic===filter);
-  const q = questions[qIdx % questions.length];
+  /* ── Load questions from Supabase ── */
+  useEffect(()=>{
+    const load = async () => {
+      setLoadingQ(true);
+      setQuestions([]);
+      setQIdx(0);
+      setScore({ correct:0, total:0 });
+
+      // Determine which volumes to query
+      const volumesToLoad = filter === "all"
+        ? Object.values(TOPIC_TO_VOLUME)
+        : TOPIC_TO_VOLUME[filter] ? [TOPIC_TO_VOLUME[filter]] : [];
+
+      if (volumesToLoad.length === 0) {
+        // No Supabase data for this topic — fall back to mock
+        const filtered = filter === "all"
+          ? MOCK_QUESTIONS
+          : MOCK_QUESTIONS.filter(q => q.topic === filter);
+        setQuestions(filtered);
+        setLoadingQ(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("questions")
+        .select("*")
+        .in("volume", volumesToLoad)
+        .order("id");
+
+      if (error || !data || data.length === 0) {
+        // Supabase error or empty — fall back to mock
+        const filtered = filter === "all"
+          ? MOCK_QUESTIONS
+          : MOCK_QUESTIONS.filter(q => q.topic === filter);
+        setQuestions(filtered);
+      } else {
+        setQuestions(data.map(dbQuestionToApp));
+      }
+      setLoadingQ(false);
+    };
+    load();
+  }, [filter]);
+
+  const q = questions[qIdx % Math.max(questions.length, 1)];
   const hitFreeLimit = !isPremium && qIdx >= FREE_QUESTIONS_PER_TOPIC;
 
   const reveal = () => { clearInterval(timerRef.current); setRevealed(true); };
 
   useEffect(()=>{
+    if (!q || loadingQ) return;
     setSelected(null); setRevealed(false); setTimeLeft(30);
     clearInterval(timerRef.current);
     timerRef.current = setInterval(()=>{
       setTimeLeft(tl=>{ if(tl<=1){ reveal(); return 0; } return tl-1; });
     },1000);
     return ()=>clearInterval(timerRef.current);
-  },[qIdx, filter]);
+  // eslint-disable-next-line
+  },[qIdx, filter, loadingQ]);
 
   const handleSelect = async (i) => {
     if(revealed||selected!==null) return;
@@ -564,11 +680,9 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
     const isCorrect = i === q.correct;
     setScore(s=>({ correct: s.correct+(isCorrect?1:0), total:s.total+1 }));
 
-    // Save progress to Supabase (upsert per topic)
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const topic = q.topic;
-      // First get existing row
       const { data: existing } = await supabase
         .from("user_progress")
         .select("questions_answered, questions_correct")
@@ -589,11 +703,12 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
     }
   };
 
-  const next = ()=>{ setQIdx(qi=>(qi+1)%questions.length); };
+  const next = ()=>{ setQIdx(qi=>(qi+1) % Math.max(questions.length, 1)); };
 
   const circ = 2*Math.PI*26;
   const letters=["A","B","C","D"];
   const optColor=(i)=>{
+    if(!q) return C.border;
     if(!revealed) return selected===i?C.blue:C.border;
     if(i===q.correct) return C.green;
     if(i===selected) return C.red;
@@ -616,8 +731,11 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
         </button>
       </div>
 
+      {/* Loading state */}
+      {loadingQ && <Spinner/>}
+
       {/* Free limit wall */}
-      {hitFreeLimit ? (
+      {!loadingQ && hitFreeLimit ? (
         <div style={{ textAlign:"center", padding:"40px 20px", animation:"fadeIn .4s ease" }}>
           <div style={{ fontSize:56, marginBottom:16 }}>🔒</div>
           <h3 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:24, fontWeight:700, color:C.navy, marginBottom:10 }}>
@@ -635,7 +753,7 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
             </button>
           </div>
         </div>
-      ) : (<>
+      ) : !loadingQ && q ? (<>
 
       {/* Score bar */}
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:20 }}>
@@ -660,7 +778,6 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
 
       {/* Question card */}
       <div className="card" style={{ padding:"20px", marginBottom:16, animation:"scaleIn .3s ease" }}>
-        {/* Timer */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
           <TopicBadge topic={q.topic}/>
           <div style={{ position:"relative", width:52, height:52, flexShrink:0 }}>
@@ -721,20 +838,12 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
 
       {revealed && (
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          <div style={{ padding:"12px 16px", borderRadius:10,
-            background:C.blueDim, border:`1px solid ${C.border}`,
-            display:"flex", alignItems:"center", gap:10, animation:"fadeUp .3s ease both" }}>
-            <span style={{ fontSize:16 }}>📖</span>
-            <span style={{ fontSize:12, color:C.blue, fontWeight:600 }}>
-              {t?"Spiegazione completa nella descrizione del post":"Full explanation in the post description"}
-            </span>
-          </div>
           <button onClick={next} className="btn-primary" style={{ padding:"14px", fontSize:15, animation:"fadeUp .3s ease .1s both" }}>
             {t?"Prossima Domanda →":"Next Question →"}
           </button>
         </div>
       )}
-      </>)}
+      </>) : null}
     </div>
   );
 }
@@ -742,70 +851,117 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
 /* ── FLASHCARDS ── */
 function FlashcardScreen({ lang, isPremium }) {
   const t = lang==="it";
+  const [cards, setCards] = useState([]);
+  const [loadingF, setLoadingF] = useState(true);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [known, setKnown] = useState([]);
-  const card = FLASHCARDS[idx % FLASHCARDS.length];
+
+  /* ── Load flashcards from Supabase ── */
+  useEffect(()=>{
+    const load = async () => {
+      setLoadingF(true);
+
+      const volumes = Object.values(TOPIC_TO_VOLUME);
+      if (volumes.length === 0) {
+        setCards(MOCK_FLASHCARDS);
+        setLoadingF(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("flashcards")
+        .select("*")
+        .in("volume", volumes)
+        .order("id");
+
+      if (error || !data || data.length === 0) {
+        setCards(MOCK_FLASHCARDS);
+      } else {
+        setCards(data.map(dbFlashcardToApp));
+      }
+      setLoadingF(false);
+    };
+    load();
+  }, []);
+
+  const visibleCards = isPremium ? cards : cards.slice(0, 5);
+  const card = visibleCards[idx % Math.max(visibleCards.length, 1)];
 
   const next = (knew) => {
-    if(knew) setKnown(k=>[...k, card.id]);
+    if(knew && card) setKnown(k=>[...k, card.id]);
     setFlipped(false);
-    setTimeout(()=>setIdx(i=>(i+1)%FLASHCARDS.length),150);
+    setTimeout(()=>setIdx(i=>(i+1) % Math.max(visibleCards.length, 1)), 150);
   };
+
+  if (loadingF) return (
+    <div style={{ padding:"24px 20px 90px" }}>
+      <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:24, fontWeight:700, marginBottom:24 }}>Flashcards</h2>
+      <Spinner/>
+    </div>
+  );
 
   return (
     <div style={{ padding:"24px 20px 90px", animation:"fadeIn .4s ease" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
         <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:24, fontWeight:700 }}>Flashcards</h2>
-        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:12, color:C.gray }}>{idx+1}/{FLASHCARDS.length}</span>
+        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:12, color:C.gray }}>
+          {idx+1}/{visibleCards.length}
+        </span>
       </div>
 
       {/* Progress */}
       <div style={{ height:3, background:C.border, borderRadius:99, marginBottom:28 }}>
-        <div style={{ height:"100%", width:`${((idx+1)/FLASHCARDS.length)*100}%`, background:`linear-gradient(90deg,${C.blue},${C.gold})`, borderRadius:99, transition:"width .4s" }}/>
+        <div style={{ height:"100%", width:`${visibleCards.length > 0 ? ((idx+1)/visibleCards.length)*100 : 0}%`, background:`linear-gradient(90deg,${C.blue},${C.gold})`, borderRadius:99, transition:"width .4s" }}/>
       </div>
 
-      {/* Card */}
-      <div onClick={()=>setFlipped(f=>!f)} style={{
-        minHeight:260, padding:"28px 24px", borderRadius:20,
-        background: flipped ? `linear-gradient(135deg,${C.navy},${C.blueDim})` : C.surface,
-        border:`1.5px solid ${flipped?C.blueDim:C.border}`,
-        cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"space-between",
-        transition:"all .3s", animation:"scaleIn .3s ease",
-        marginBottom:20
-      }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-          <TopicBadge topic={card.topic}/>
-          <span className="tag" style={{ background:`${C.gold}18`, color:C.gold, border:`1px solid ${C.goldDim}` }}>{card.tag}</span>
-        </div>
-        <div>
-          <div style={{ fontSize:10, color:flipped?C.blueHi:C.gray, letterSpacing:2, textTransform:"uppercase", fontWeight:700, marginBottom:12 }}>
-            {flipped?(t?"RISPOSTA":"ANSWER"):(t?"DOMANDA":"QUESTION")}
+      {card && (
+        <>
+          {/* Card */}
+          <div onClick={()=>setFlipped(f=>!f)} style={{
+            minHeight:260, padding:"28px 24px", borderRadius:20,
+            background: flipped ? `linear-gradient(135deg,${C.navy},${C.blueDim})` : C.surface,
+            border:`1.5px solid ${flipped?C.blueDim:C.border}`,
+            cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"space-between",
+            transition:"all .3s", animation:"scaleIn .3s ease",
+            marginBottom:20
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <TopicBadge topic={card.topic}/>
+              <span className="tag" style={{ background:`${C.gold}18`, color:C.gold, border:`1px solid ${C.goldDim}` }}>{card.tag}</span>
+            </div>
+            <div>
+              <div style={{ fontSize:10, color:flipped?C.blueHi:C.gray, letterSpacing:2, textTransform:"uppercase", fontWeight:700, marginBottom:12 }}>
+                {flipped?(t?"RISPOSTA":"ANSWER"):(t?"DOMANDA":"QUESTION")}
+              </div>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:flipped?15:18, lineHeight:1.65, color:C.white, whiteSpace:"pre-line" }}>
+                {flipped?card.back:card.front}
+              </div>
+            </div>
+            <div style={{ textAlign:"center", fontSize:11, color:C.gray, marginTop:16 }}>
+              {flipped?(t?"Tocca per la domanda":"Tap for question"):(t?"Tocca per la risposta":"Tap for answer")}
+            </div>
           </div>
-          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:flipped?15:18, lineHeight:1.65, color:C.white, whiteSpace:"pre-line" }}>
-            {flipped?card.back:card.front}
-          </div>
-        </div>
-        <div style={{ textAlign:"center", fontSize:11, color:C.gray, marginTop:16 }}>
-          {flipped?(t?"Tocca per la domanda":"Tap for question"):(t?"Tocca per la risposta":"Tap for answer")}
-        </div>
-      </div>
 
-      {flipped && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, animation:"fadeUp .3s ease both" }}>
-          <button onClick={()=>next(false)} className="btn-ghost" style={{ padding:"14px", borderColor:C.red, color:C.red }}>
-            😕 {t?"Da ripassare":"Study more"}
-          </button>
-          <button onClick={()=>next(true)} className="btn-primary" style={{ padding:"14px", background:`linear-gradient(135deg,${C.green},#16A361)` }}>
-            ✓ {t?"Lo so":"Got it!"}
-          </button>
-        </div>
+          {flipped && (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, animation:"fadeUp .3s ease both" }}>
+              <button onClick={()=>next(false)} className="btn-ghost" style={{ padding:"14px", borderColor:C.red, color:C.red }}>
+                😕 {t?"Da ripassare":"Study more"}
+              </button>
+              <button onClick={()=>next(true)} className="btn-primary" style={{ padding:"14px", background:`linear-gradient(135deg,${C.green},#16A361)` }}>
+                ✓ {t?"Lo so":"Got it!"}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {!isPremium && (
         <div className="card" style={{ marginTop:24, padding:"16px", borderColor:C.blue, background:C.blueDim }}>
-          <div style={{ fontSize:13, color:C.blue, fontWeight:700, marginBottom:4 }}>🔒 {t?"Solo 3 flashcard gratuite":"Only 3 free flashcards"}</div>
-          <div style={{ fontSize:12, color:C.gray }}>{t?"Sblocca tutte le 500+ flashcard con Premium":"Unlock all 500+ flashcards with Premium"}</div>
+          <div style={{ fontSize:13, color:C.blue, fontWeight:700, marginBottom:4 }}>
+            🔒 {t?`Solo 5 flashcard gratuite (${cards.length} totali disponibili)`:`Only 5 free flashcards (${cards.length} total available)`}
+          </div>
+          <div style={{ fontSize:12, color:C.gray }}>{t?"Sblocca tutte le flashcard con Premium":"Unlock all flashcards with Premium"}</div>
         </div>
       )}
     </div>
@@ -813,17 +969,50 @@ function FlashcardScreen({ lang, isPremium }) {
 }
 
 /* ── EXAM SIMULATOR ── */
-function ExamScreen({ lang, isPremium, setScreen }) {
+function ExamScreen({ lang, isPremium, setScreen, user }) {
   const t = lang==="it";
   const [phase, setPhase] = useState("intro"); // intro | session | done
-  const [session, setSession] = useState(1); // 1 or 2
+  const [examQuestions, setExamQuestions] = useState([]);
+  const [loadingExam, setLoadingExam] = useState(false);
+  const [session, setSession] = useState(1);
   const [qIdx, setQIdx] = useState(0);
+  const [answers, setAnswers] = useState({}); // { qId: selectedIndex }
   const [elapsed, setElapsed] = useState(0);
   const [selected, setSelected] = useState(null);
-  const [revealed, setRevealed] = useState(false);
+  const [result, setResult] = useState(null); // { score, total, pct }
   const timerRef = useRef();
 
   const totalTime = 270*60;
+  const QUESTIONS_PER_SESSION = 90;
+
+  /* ── Load 180 questions for the exam ── */
+  const loadExamQuestions = async () => {
+    setLoadingExam(true);
+
+    const volumes = Object.values(TOPIC_TO_VOLUME);
+    let allQuestions = [];
+
+    if (volumes.length > 0) {
+      const { data, error } = await supabase
+        .from("questions")
+        .select("*")
+        .in("volume", volumes);
+
+      if (!error && data && data.length > 0) {
+        allQuestions = data.map(dbQuestionToApp);
+      }
+    }
+
+    // Fall back to mock if not enough questions
+    if (allQuestions.length < 10) {
+      allQuestions = [...MOCK_QUESTIONS, ...MOCK_QUESTIONS, ...MOCK_QUESTIONS];
+    }
+
+    // Shuffle and take up to 180
+    const shuffled = [...allQuestions].sort(() => Math.random() - 0.5);
+    setExamQuestions(shuffled.slice(0, Math.min(180, shuffled.length)));
+    setLoadingExam(false);
+  };
 
   useEffect(()=>{
     if(phase==="session"){
@@ -832,7 +1021,42 @@ function ExamScreen({ lang, isPremium, setScreen }) {
     return ()=>clearInterval(timerRef.current);
   },[phase]);
 
-  const fmtTime=(s)=>`${String(Math.floor((totalTime-s)/3600)).padStart(2,"0")}:${String(Math.floor(((totalTime-s)%3600)/60)).padStart(2,"0")}:${String((totalTime-s)%60).padStart(2,"0")}`;
+  const fmtTime=(s)=>{
+    const remaining = Math.max(0, totalTime - s);
+    return `${String(Math.floor(remaining/3600)).padStart(2,"0")}:${String(Math.floor((remaining%3600)/60)).padStart(2,"0")}:${String(remaining%60).padStart(2,"0")}`;
+  };
+
+  /* ── Save result to exam_results ── */
+  const saveResult = async (score, total, sessionNum) => {
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) return;
+    await supabase.from("exam_results").insert({
+      user_id:    authUser.id,
+      score,
+      total,
+      module:     `Session ${sessionNum}`,
+      volume:     "CFA Level I",
+      created_at: new Date().toISOString(),
+    });
+  };
+
+  const handleEndSession = async () => {
+    clearInterval(timerRef.current);
+    const sessionQs = examQuestions.slice(
+      (session-1)*QUESTIONS_PER_SESSION,
+      session*QUESTIONS_PER_SESSION
+    );
+    let correct = 0;
+    sessionQs.forEach((q, i) => {
+      const globalIdx = (session-1)*QUESTIONS_PER_SESSION + i;
+      if (answers[globalIdx] === q.correct) correct++;
+    });
+    const total = sessionQs.length;
+    const pct = total > 0 ? Math.round((correct/total)*100) : 0;
+    await saveResult(correct, total, session);
+    setResult({ score: correct, total, pct });
+    setPhase("done");
+  };
 
   if(!isPremium) return (
     <div style={{ padding:"40px 24px 90px", display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center", animation:"fadeIn .4s ease" }}>
@@ -847,6 +1071,42 @@ function ExamScreen({ lang, isPremium, setScreen }) {
     </div>
   );
 
+  /* ── DONE SCREEN ── */
+  if(phase==="done" && result) return (
+    <div style={{ padding:"32px 20px 90px", animation:"fadeIn .4s ease", textAlign:"center" }}>
+      <div style={{ fontSize:64, marginBottom:16 }}>{result.pct>=70?"🎉":"📊"}</div>
+      <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:28, fontWeight:700, color:C.navy, marginBottom:8 }}>
+        {t?"Sessione completata":"Session complete"}
+      </h2>
+      <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:48, color:result.pct>=70?C.green:C.amber, fontWeight:500, margin:"20px 0" }}>
+        {result.pct}%
+      </div>
+      <p style={{ fontSize:14, color:C.gray, marginBottom:8 }}>
+        {result.score}/{result.total} {t?"risposte corrette":"correct answers"}
+      </p>
+      <p style={{ fontSize:13, color:result.pct>=70?C.green:C.amber, fontWeight:700, marginBottom:32 }}>
+        {result.pct>=70
+          ? (t?"✓ Sopra la soglia di superamento stimata (70%)":"✓ Above estimated passing threshold (70%)")
+          : (t?"⚠ Sotto la soglia di superamento stimata (70%)":"⚠ Below estimated passing threshold (70%)")}
+      </p>
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {session === 1 && (
+          <button className="btn-primary" style={{ padding:"14px", fontSize:15 }} onClick={()=>{
+            setSession(2); setQIdx(0); setSelected(null); setElapsed(0); setResult(null); setPhase("session");
+            timerRef.current = setInterval(()=>setElapsed(e=>e+1),1000);
+          }}>
+            {t?"Inizia Sessione 2 →":"Start Session 2 →"}
+          </button>
+        )}
+        <button className="btn-ghost" style={{ padding:"13px", fontSize:14 }} onClick={()=>{
+          setPhase("intro"); setSession(1); setQIdx(0); setAnswers({}); setElapsed(0); setResult(null);
+        }}>
+          {t?"Ricomincia":"Restart"}
+        </button>
+      </div>
+    </div>
+  );
+
   if(phase==="intro") return (
     <div style={{ padding:"24px 20px 90px", animation:"fadeIn .4s ease" }}>
       <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:26, fontWeight:700, marginBottom:6 }}>{t?"Simulatore d'Esame":"Exam Simulator"}</h2>
@@ -857,7 +1117,7 @@ function ExamScreen({ lang, isPremium, setScreen }) {
         {[
           { icon:"📝", title:t?"180 Domande Total":"180 Total Questions", desc:t?"90 per sessione, come il vero esame":"90 per session, just like the real exam" },
           { icon:"⏱️", title:t?"270 Minuti per Sessione":"270 Minutes per Session", desc:t?"1.5 minuti a domanda":"1.5 minutes per question" },
-          { icon:"📊", title:t?"Report Dettagliato":"Detailed Report", desc:t?"Analisi per topic e weak areas":"Topic-by-topic breakdown + weak areas" },
+          { icon:"📊", title:t?"Report Dettagliato":"Detailed Report", desc:t?"Score salvato nel tuo profilo":"Score saved to your profile" },
           { icon:"🎯", title:t?"Benchmark 70%":"70% Benchmark", desc:t?"Il passing score CFA stimato":"Estimated CFA passing score" },
         ].map((it,i)=>(
           <div key={i} className="card" style={{ padding:"14px 16px", display:"flex", gap:14, alignItems:"center", animation:`fadeUp .4s ease ${i*.08}s both` }}>
@@ -869,13 +1129,26 @@ function ExamScreen({ lang, isPremium, setScreen }) {
           </div>
         ))}
       </div>
-      <button onClick={()=>setPhase("session")} className="btn-primary" style={{ width:"100%", padding:"15px", fontSize:16 }}>
-        {t?"Inizia Sessione 1 →":"Start Session 1 →"}
+      <button onClick={async ()=>{
+        await loadExamQuestions();
+        setPhase("session");
+      }} className="btn-primary" style={{ width:"100%", padding:"15px", fontSize:16 }} disabled={loadingExam}>
+        {loadingExam ? (t?"Caricamento domande...":"Loading questions...") : (t?"Inizia Sessione 1 →":"Start Session 1 →")}
       </button>
     </div>
   );
 
-  const q = MOCK_QUESTIONS[qIdx % MOCK_QUESTIONS.length];
+  /* ── SESSION SCREEN ── */
+  const sessionQs = examQuestions.slice(
+    (session-1)*QUESTIONS_PER_SESSION,
+    session*QUESTIONS_PER_SESSION
+  );
+  const q = sessionQs[qIdx];
+
+  if (!q) return <Spinner/>;
+
+  const globalIdx = (session-1)*QUESTIONS_PER_SESSION + qIdx;
+
   return (
     <div style={{ padding:"16px 20px 90px", animation:"fadeIn .4s ease" }}>
       {/* Exam header */}
@@ -883,20 +1156,20 @@ function ExamScreen({ lang, isPremium, setScreen }) {
         padding:"12px 16px", borderRadius:12, background:C.surface, border:`1px solid ${C.border}` }}>
         <div>
           <div style={{ fontSize:10, color:C.gray, letterSpacing:1.5, textTransform:"uppercase", fontWeight:700 }}>{t?"Sessione":"Session"} {session}/2</div>
-          <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:13, color:C.white, marginTop:2 }}>Q {qIdx+1}/90</div>
+          <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:13, color:C.white, marginTop:2 }}>Q {qIdx+1}/{sessionQs.length}</div>
         </div>
         <div style={{ textAlign:"center" }}>
           <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:20, color: elapsed>totalTime*.8?C.red:C.gold }}>{fmtTime(elapsed)}</div>
           <div style={{ fontSize:9, color:C.gray, fontWeight:700, letterSpacing:1, textTransform:"uppercase" }}>{t?"Tempo rimanente":"Time remaining"}</div>
         </div>
-        <button onClick={()=>setPhase("done")} className="btn-ghost" style={{ padding:"6px 12px", fontSize:11, borderColor:C.red, color:C.red }}>
+        <button onClick={handleEndSession} className="btn-ghost" style={{ padding:"6px 12px", fontSize:11, borderColor:C.red, color:C.red }}>
           {t?"Fine":"End"}
         </button>
       </div>
 
       {/* Progress */}
       <div style={{ height:2, background:C.border, borderRadius:99, marginBottom:20 }}>
-        <div style={{ height:"100%", width:`${((qIdx+1)/90)*100}%`, background:C.blue, borderRadius:99, transition:"width .3s" }}/>
+        <div style={{ height:"100%", width:`${((qIdx+1)/sessionQs.length)*100}%`, background:C.blue, borderRadius:99, transition:"width .3s" }}/>
       </div>
 
       <div className="card" style={{ padding:"20px", marginBottom:14 }}>
@@ -904,23 +1177,26 @@ function ExamScreen({ lang, isPremium, setScreen }) {
         <p style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:16, lineHeight:1.7, color:C.white, margin:"16px 0" }}>{q.q}</p>
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           {q.opts.map((opt,i)=>(
-            <button key={i} onClick={()=>setSelected(i)} style={{
+            <button key={i} onClick={()=>{
+              setSelected(i);
+              setAnswers(prev => ({ ...prev, [globalIdx]: i }));
+            }} style={{
               padding:"12px 14px", borderRadius:10, textAlign:"left",
-              background:selected===i?`${C.blue}22`:C.surfaceUp,
-              border:`1.5px solid ${selected===i?C.blue:C.border}`,
+              background:selected===i || answers[globalIdx]===i ?`${C.blue}22`:C.surfaceUp,
+              border:`1.5px solid ${selected===i || answers[globalIdx]===i ?C.blue:C.border}`,
               color:C.white, cursor:"pointer", fontSize:13,
               fontFamily:"'Syne',sans-serif", display:"flex", gap:10, alignItems:"center",
               transition:"all .2s"
             }}>
-              <span style={{ fontFamily:"'JetBrains Mono',monospace", color:selected===i?C.blueHi:C.gray, fontSize:12, minWidth:16 }}>{"ABCD"[i]}</span>
+              <span style={{ fontFamily:"'JetBrains Mono',monospace", color:selected===i || answers[globalIdx]===i ?C.blueHi:C.gray, fontSize:12, minWidth:16 }}>{"ABCD"[i]}</span>
               {opt}
             </button>
           ))}
         </div>
       </div>
 
-      <button onClick={()=>setQIdx(i=>i+1)} className="btn-primary" style={{ width:"100%", padding:"13px", fontSize:14 }}>
-        {t?"Successiva →":"Next →"}
+      <button onClick={()=>{ setSelected(null); setQIdx(i=>i+1); }} className="btn-primary" style={{ width:"100%", padding:"13px", fontSize:14 }}>
+        {qIdx+1 < sessionQs.length ? (t?"Successiva →":"Next →") : (t?"Termina sessione →":"End session →")}
       </button>
     </div>
   );
@@ -967,7 +1243,6 @@ function PricingScreen({ lang, setIsPremium, user, setScreen }) {
         <p style={{ fontSize:13, color:C.gray }}>{t?"Nessuna sorpresa. Cancella quando vuoi.":"No surprises. Cancel anytime."}</p>
       </div>
 
-      {/* Billing toggle */}
       <div style={{ display:"flex", justifyContent:"center", marginBottom:24 }}>
         <div style={{ display:"flex", background:C.surface, borderRadius:10, padding:4, border:`1px solid ${C.border}` }}>
           {["monthly","annual"].map(b=>(
@@ -1025,12 +1300,10 @@ function PricingScreen({ lang, setIsPremium, user, setScreen }) {
             </div>
 
             <button onClick={()=>{
-                // Free plan → register (or dashboard if already logged in)
                 if(!plan.primary){
                   setScreen(user ? "dashboard" : "register");
                   return;
                 }
-                // Premium: must be logged in to attach user_id to the purchase
                 if(!user){
                   setScreen("register");
                   return;
@@ -1065,7 +1338,6 @@ function PricingScreen({ lang, setIsPremium, user, setScreen }) {
    AUTH SCREENS
 ───────────────────────────────────────────── */
 
-/* shared input style */
 const inputStyle = (focused) => ({
   width:"100%", padding:"13px 16px", borderRadius:10, fontSize:14,
   fontFamily:"'Syne',sans-serif", color:C.white, background:C.surfaceUp,
@@ -1154,7 +1426,6 @@ function LoginScreen({ setScreen, setUser, lang }) {
 
   return (
     <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", background:C.bg }}>
-      {/* Header */}
       <div style={{ padding:"24px 24px 0", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <Logo size={18}/>
         <button onClick={()=>setScreen("landing")} className="btn-ghost" style={{ padding:"6px 12px", fontSize:12 }}>
@@ -1163,7 +1434,6 @@ function LoginScreen({ setScreen, setUser, lang }) {
       </div>
 
       <div style={{ flex:1, padding:"32px 24px 40px", display:"flex", flexDirection:"column", justifyContent:"center", maxWidth:440, margin:"0 auto", width:"100%" }}>
-        {/* Title */}
         <div style={{ marginBottom:32, animation:"fadeUp .4s ease both" }}>
           <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:32, fontWeight:700, color:C.navy, marginBottom:6 }}>
             {t?"Bentornato":"Welcome back"} 👋
@@ -1173,19 +1443,15 @@ function LoginScreen({ setScreen, setUser, lang }) {
           </p>
         </div>
 
-        {/* Google */}
         <div style={{ animation:"fadeUp .4s ease .05s both" }}>
           <GoogleBtn lang={lang} onClick={handleGoogle}/>
         </div>
 
         <AuthDivider lang={lang}/>
 
-        {/* Form */}
         <div style={{ animation:"fadeUp .4s ease .1s both" }}>
-          <AuthInput label="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)}
-            placeholder="mario@email.com"/>
-          <AuthInput label={t?"Password":"Password"} type="password" value={password} onChange={e=>setPassword(e.target.value)}
-            placeholder="••••••••"/>
+          <AuthInput label="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="mario@email.com"/>
+          <AuthInput label={t?"Password":"Password"} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••"/>
 
           <div style={{ textAlign:"right", marginTop:-8, marginBottom:20 }}>
             <button onClick={()=>setScreen("forgot")} style={{ background:"none", border:"none", color:C.blue, fontSize:12, cursor:"pointer", fontWeight:600 }}>
@@ -1225,7 +1491,7 @@ function RegisterScreen({ setScreen, setUser, lang }) {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [step, setStep] = useState(1); // 1=form, 2=verify email
+  const [step, setStep] = useState(1);
 
   const handleRegister = async () => {
     if (!name || !email || !password) { setError(t?"Compila tutti i campi":"Fill in all fields"); return; }
@@ -1393,19 +1659,25 @@ function ForgotScreen({ setScreen, lang }) {
 function ProfileScreen({ user, setUser, setScreen, lang, setLang, isPremium }) {
   const t = lang==="it";
   const [showLogout, setShowLogout] = useState(false);
+  const [examHistory, setExamHistory] = useState([]);
+
+  useEffect(()=>{
+    const load = async () => {
+      const { data } = await supabase
+        .from("exam_results")
+        .select("score, total, module, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (data) setExamHistory(data);
+    };
+    load();
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
     setScreen("landing");
   };
-
-  const stats = [
-    { icon:"🔥", label:t?"Streak":"Streak",    val:"12 gg" },
-    { icon:"✅", label:t?"Risposte":"Answered", val:"347" },
-    { icon:"🎯", label:"Accuracy",              val:"71%" },
-    { icon:"📚", label:t?"Topic":"Topics",       val:"3/10" },
-  ];
 
   return (
     <div style={{ padding:"24px 20px 90px", animation:"fadeIn .4s ease" }}>
@@ -1432,16 +1704,30 @@ function ProfileScreen({ user, setUser, setScreen, lang, setLang, isPremium }) {
         )}
       </div>
 
-      {/* Stats grid */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:24 }}>
-        {stats.map((s,i)=>(
-          <div key={i} className="card" style={{ padding:"16px", animation:`fadeUp .4s ease ${i*.06}s both` }}>
-            <div style={{ fontSize:22, marginBottom:6 }}>{s.icon}</div>
-            <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:20, color:C.navy, fontWeight:500 }}>{s.val}</div>
-            <div style={{ fontSize:11, color:C.gray, fontWeight:600, letterSpacing:.5, textTransform:"uppercase", marginTop:2 }}>{s.label}</div>
+      {/* Exam history */}
+      {examHistory.length > 0 && (
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.navy, marginBottom:12, letterSpacing:.3 }}>
+            {t?"Ultime simulazioni":"Recent exams"}
           </div>
-        ))}
-      </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {examHistory.map((r, i)=>(
+              <div key={i} className="card" style={{ padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.white }}>{r.module}</div>
+                  <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>{new Date(r.created_at).toLocaleDateString()}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:16, color: Math.round(r.score/r.total*100)>=70?C.green:C.amber }}>
+                    {Math.round(r.score/r.total*100)}%
+                  </div>
+                  <div style={{ fontSize:10, color:C.gray }}>{r.score}/{r.total}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Settings list */}
       <div style={{ display:"flex", flexDirection:"column", gap:2, marginBottom:20 }}>
@@ -1462,7 +1748,6 @@ function ProfileScreen({ user, setUser, setScreen, lang, setLang, isPremium }) {
         ))}
       </div>
 
-      {/* Premium CTA if free */}
       {!isPremium && (
         <div className="card" onClick={()=>setScreen("pricing")} style={{
           padding:"16px 18px", cursor:"pointer", marginBottom:16,
@@ -1480,13 +1765,11 @@ function ProfileScreen({ user, setUser, setScreen, lang, setLang, isPremium }) {
         </div>
       )}
 
-      {/* Logout */}
       <button onClick={()=>setShowLogout(true)} className="btn-ghost"
         style={{ width:"100%", padding:"13px", borderColor:C.red, color:C.red }}>
         {t?"Esci dall'account":"Sign out"}
       </button>
 
-      {/* Logout confirm modal */}
       {showLogout && (
         <div style={{
           position:"fixed", inset:0, background:"rgba(0,0,0,.4)", zIndex:200,
@@ -1527,11 +1810,10 @@ export default function App() {
   const [lang, setLang] = useState("it");
   const [isPremium, setIsPremium] = useState(false);
   const [activeTopic, setActiveTopic] = useState("all");
-  const [user, setUser] = useState(null); // null = not logged in
+  const [user, setUser] = useState(null);
 
   useEffect(()=>{ injectStyles(); },[]);
 
-  // Supabase session persistence — restores login on page reload
   useEffect(()=>{
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -1562,7 +1844,6 @@ export default function App() {
   // eslint-disable-next-line
   },[]);
 
-  // Fetch premium status from subscriptions table whenever user changes
   useEffect(()=>{
     if(!user) { setIsPremium(false); return; }
     let cancelled = false;
@@ -1582,23 +1863,19 @@ export default function App() {
       }
     };
     fetchPremium();
-    // Re-check every 30s in case the webhook updates the DB while user is on the app
     const interval = setInterval(fetchPremium, 30000);
     return () => { cancelled = true; clearInterval(interval); };
   // eslint-disable-next-line
   },[user]);
 
-  // Auth screens (no nav)
   const authScreens = ["landing","login","register","forgot"];
   const showNav = !authScreens.includes(screen) && !!user;
 
-  // Auto-redirect after login
   const handleSetUser = (u) => {
     setUser(u);
     setScreen("dashboard");
   };
 
-  // Nav items (profile replaces the old account icon)
   const navItems = [
     { id:"dashboard", icon:"⊞", labelIt:"Dashboard", labelEn:"Dashboard" },
     { id:"quiz",      icon:"❓", labelIt:"Quiz",      labelEn:"Quiz" },
@@ -1610,7 +1887,6 @@ export default function App() {
   return (
     <div style={{ maxWidth:480, margin:"0 auto", minHeight:"100vh", position:"relative", background:C.bg }}>
 
-      {/* Top bar */}
       {showNav && (
         <div style={{
           position:"sticky", top:0, zIndex:50,
@@ -1633,7 +1909,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Screens */}
       {screen==="landing"   && <Landing       setScreen={setScreen} lang={lang} setLang={setLang}/>}
       {screen==="login"     && <LoginScreen    setScreen={setScreen} setUser={handleSetUser} lang={lang}/>}
       {screen==="register"  && <RegisterScreen setScreen={setScreen} setUser={handleSetUser} lang={lang}/>}
@@ -1642,11 +1917,10 @@ export default function App() {
       {user && screen==="dashboard" && <Dashboard    setScreen={setScreen} setActiveTopic={setActiveTopic} lang={lang} isPremium={isPremium} user={user}/>}
       {user && screen==="quiz"      && <QuizScreen   activeTopic={activeTopic} lang={lang} isPremium={isPremium}/>}
       {user && screen==="flashcard" && <FlashcardScreen lang={lang} isPremium={isPremium}/>}
-      {user && screen==="exam"      && <ExamScreen   lang={lang} isPremium={isPremium} setScreen={setScreen}/>}
+      {user && screen==="exam"      && <ExamScreen   lang={lang} isPremium={isPremium} setScreen={setScreen} user={user}/>}
       {screen==="pricing"   && <PricingScreen lang={lang} setIsPremium={(v)=>{setIsPremium(v);setScreen("dashboard");}} user={user} setScreen={setScreen}/>}
       {user && screen==="profile"   && <ProfileScreen user={user} setUser={setUser} setScreen={setScreen} lang={lang} setLang={setLang} isPremium={isPremium}/>}
 
-      {/* Bottom nav */}
       {showNav && (
         <nav style={{
           position:"fixed", bottom:0, left:0, right:0, zIndex:100,
