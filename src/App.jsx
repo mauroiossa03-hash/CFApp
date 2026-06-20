@@ -50,7 +50,7 @@ const TOPICS = [
  * When a volume is not yet loaded we fall back to mock data.
  */
 const TOPIC_TO_VOLUME = {
-  econ: "Economics",
+  econ: "Economics Vol 2",
   // ethics: "Ethics",  // uncomment when loaded
   // quant: "Quantitative Methods",
   // etc.
@@ -644,6 +644,12 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
         .in("volume", volumesToLoad)
         .order("id");
 
+      // Diagnostic logging — remove once confirmed working
+      console.log("[Quiz] Volumes queried:", volumesToLoad);
+      console.log("[Quiz] Rows returned:", data?.length || 0);
+      if (error) console.error("[Quiz] Supabase error:", error);
+      if (data && data.length > 0) console.log("[Quiz] First row volume value:", data[0].volume);
+
       if (error || !data || data.length === 0) {
         // Supabase error or empty — fall back to mock
         const filtered = filter === "all"
@@ -680,26 +686,32 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
     const isCorrect = i === q.correct;
     setScore(s=>({ correct: s.correct+(isCorrect?1:0), total:s.total+1 }));
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const topic = q.topic;
-      const { data: existing } = await supabase
-        .from("user_progress")
-        .select("questions_answered, questions_correct")
-        .eq("user_id", user.id)
-        .eq("topic", topic)
-        .single();
+    // Save progress to Supabase — wrapped so a failure here NEVER blocks the quiz
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const topic = q.topic;
+        // maybeSingle() returns null (not a 406 error) when no row exists yet
+        const { data: existing } = await supabase
+          .from("user_progress")
+          .select("questions_answered, questions_correct")
+          .eq("user_id", user.id)
+          .eq("topic", topic)
+          .maybeSingle();
 
-      const newAnswered = (existing?.questions_answered || 0) + 1;
-      const newCorrect  = (existing?.questions_correct  || 0) + (isCorrect ? 1 : 0);
+        const newAnswered = (existing?.questions_answered || 0) + 1;
+        const newCorrect  = (existing?.questions_correct  || 0) + (isCorrect ? 1 : 0);
 
-      await supabase.from("user_progress").upsert({
-        user_id: user.id,
-        topic,
-        questions_answered: newAnswered,
-        questions_correct:  newCorrect,
-        last_activity: new Date().toISOString(),
-      }, { onConflict: "user_id,topic" });
+        await supabase.from("user_progress").upsert({
+          user_id: user.id,
+          topic,
+          questions_answered: newAnswered,
+          questions_correct:  newCorrect,
+          last_activity: new Date().toISOString(),
+        }, { onConflict: "user_id,topic" });
+      }
+    } catch (err) {
+      console.error("Progress save failed (non-blocking):", err);
     }
   };
 
