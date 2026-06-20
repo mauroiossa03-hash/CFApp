@@ -34,7 +34,7 @@ const C = {
 const TOPICS = [
   { id: "ethics",     name: "Ethics & Standards",        icon: "⚖️", total: 180, color: "#1A56DB", free: true  },
   { id: "quant",      name: "Quantitative Methods",       icon: "📐", total: 220, color: "#7C3AED", free: true  },
-  { id: "econ",       name: "Economics",                  icon: "📈", total: 195, color: "#0891B2", free: true  },
+  { id: "econ",       name: "Economics",                  icon: "📈", total: 250, color: "#0891B2", free: true  },
   { id: "fra",        name: "Financial Reporting",        icon: "📋", total: 280, color: "#7C3AED", free: false },
   { id: "corp",       name: "Corporate Finance",          icon: "🏢", total: 160, color: "#DB2777", free: false },
   { id: "equity",     name: "Equity Investments",         icon: "📊", total: 210, color: "#16A34A", free: false },
@@ -643,12 +643,6 @@ function QuizScreen({ activeTopic, lang, isPremium }) {
         .select("*")
         .in("volume", volumesToLoad)
         .order("id");
-
-      // Diagnostic logging — remove once confirmed working
-      console.log("[Quiz] Volumes queried:", volumesToLoad);
-      console.log("[Quiz] Rows returned:", data?.length || 0);
-      if (error) console.error("[Quiz] Supabase error:", error);
-      if (data && data.length > 0) console.log("[Quiz] First row volume value:", data[0].volume);
 
       if (error || !data || data.length === 0) {
         // Supabase error or empty — fall back to mock
